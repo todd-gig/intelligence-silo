@@ -1,0 +1,130 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Intelligence Silo Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# Society of Minds architecture — local-first neural intelligence with
+# hierarchical memory and small language model matrix.
+#
+# FIRST PRINCIPLE: Local computation always has inherent advantages.
+# Build the best possible solution by exploiting locality.
+# ─────────────────────────────────────────────────────────────────────────────
+
+node:
+  id: null  # auto-generated UUID on first boot
+  name: "primary"
+  role: "sovereign"  # sovereign | relay | edge
+  max_concurrent_models: 4
+  device: "auto"  # auto | cpu | mps | cuda
+
+# ── Hierarchical Memory System ──────────────────────────────────────────────
+memory:
+  working:
+    capacity: 128          # active slots (tensor-backed)
+    ttl_seconds: 300       # eviction after 5 min inactivity
+    attention_heads: 4     # multi-head attention for relevance scoring
+  episodic:
+    max_episodes: 10000
+    embedding_dim: 384     # sentence-transformer dimension
+    similarity_threshold: 0.72
+    consolidation_interval: 60  # seconds between consolidation sweeps
+  semantic:
+    index_type: "IVFFlat"  # FAISS index type
+    nprobe: 16             # search precision
+    embedding_dim: 384
+    max_vectors: 1000000
+    persistence_path: "data/semantic_index"
+  procedural:
+    max_procedures: 5000
+    execution_threshold: 0.85  # confidence to auto-execute
+    learning_rate: 0.001
+
+# ── Small Language Model Matrix ─────────────────────────────────────────────
+# Each model is a specialized micro-expert. The matrix routes queries to
+# the best-fit model(s) and fuses their outputs.
+slm_matrix:
+  router:
+    strategy: "attention"  # attention | round_robin | specialist
+    fusion_method: "weighted_vote"  # weighted_vote | cascade | ensemble
+    confidence_floor: 0.6
+
+  models:
+    - name: "classifier"
+      type: "sequence_classification"
+      hidden_dim: 256
+      num_layers: 4
+      num_heads: 4
+      vocab_size: 8192
+      num_classes: 32
+      role: "Classifies inputs into decision categories"
+
+    - name: "scorer"
+      type: "regression"
+      hidden_dim: 256
+      num_layers: 4
+      num_heads: 4
+      vocab_size: 8192
+      output_dim: 12  # 8 value + 4 penalty dimensions
+      role: "Predicts value/penalty scores for decisions"
+
+    - name: "trust_assessor"
+      type: "sequence_classification"
+      hidden_dim: 192
+      num_layers: 3
+      num_heads: 4
+      vocab_size: 8192
+      num_classes: 5  # T0-T4
+      role: "Assesses trust tier from context signals"
+
+    - name: "memory_encoder"
+      type: "encoder"
+      hidden_dim: 384
+      num_layers: 6
+      num_heads: 6
+      vocab_size: 8192
+      role: "Encodes experiences into memory embeddings"
+
+    - name: "pattern_detector"
+      type: "sequence_classification"
+      hidden_dim: 256
+      num_layers: 4
+      num_heads: 4
+      vocab_size: 8192
+      num_classes: 64
+      role: "Detects recurring patterns across decision history"
+
+    - name: "causal_predictor"
+      type: "regression"
+      hidden_dim: 384
+      num_layers: 6
+      num_heads: 6
+      vocab_size: 8192
+      output_dim: 16  # multi-step causal chain predictions
+      role: "Predicts causal chains and downstream effects"
+
+# ── Decision Engine Bridge ──────────────────────────────────────────────────
+bridge:
+  decision_engine_url: "http://localhost:8000"
+  sync_interval: 30  # seconds
+  import_weights: true  # pull value_weights/penalty_weights from engine.yaml
+  export_predictions: true  # push neural predictions to engine pipeline
+
+# ── Google Services ─────────────────────────────────────────────────────────
+google:
+  enabled: false  # enable when credentials configured
+  project_id: null
+  gcs:
+    bucket: null
+    sync_path: "intelligence-silo/shared-memory"
+  vertex_ai:
+    region: "us-central1"
+    fallback_model: "gemini-2.0-flash"  # fallback when local models insufficient
+  firebase:
+    enabled: false
+    collection: "silo_state"
+
+# ── Node Distribution ──────────────────────────────────────────────────────
+distribution:
+  executable_name: "intel-node"
+  include_models: true  # bundle trained model weights
+  signing_key_path: null  # HMAC signing for trust verification
+  handshake_protocol: "mutual_tls"
+  mesh_discovery: "mdns"  # mdns | static | gcs_registry
