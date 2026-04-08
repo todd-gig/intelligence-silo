@@ -15,6 +15,10 @@ from .models.matrix import SLMMatrix
 from .orchestrator.society import SocietyOfMinds
 from .bridge.connector import DecisionEngineBridge
 from .google.services import GoogleServices, GoogleConfig
+from .integration.recorder import DecisionMemoryRecorder
+from .integration.sync_daemon import SyncDaemon
+from .vault.vault import SecureVault
+from .vault.backup import GitBackupManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,10 @@ class IntelligenceNode:
     - SLM Matrix (6 specialist micro-models)
     - Society of Minds (7-role multi-agent orchestrator)
     - Decision Engine Bridge (bidirectional sync)
+    - Decision Memory Recorder (auto-records all pipeline results)
+    - Secure Vault (encrypted local credential storage)
+    - Git Backup Manager (private repo failsafe)
+    - Sync Daemon (daily consolidation + midnight full sync)
     - Google Services (GCS, Vertex AI, Firebase)
 
     Each node can run standalone or as part of a mesh.
@@ -48,6 +56,26 @@ class IntelligenceNode:
         self.society = SocietyOfMinds(self.matrix, self.memory)
         self.bridge = self._build_bridge()
         self.google = self._build_google()
+
+        # Integration layer
+        self.vault = SecureVault()
+        self.recorder = DecisionMemoryRecorder(
+            memory_hierarchy=self.memory,
+            local_journal_path=str(Path("data") / "decision_journal"),
+        )
+        self.backup = GitBackupManager(
+            local_data_root=Path("."),
+            remote_repo=self.config.get("backup", {}).get("remote_repo"),
+        )
+        self.daemon = SyncDaemon(
+            memory_hierarchy=self.memory,
+            recorder=self.recorder,
+            vault=self.vault,
+            backup_manager=self.backup,
+            consolidation_interval=60.0,
+            important_interval=300.0,
+            sleep_sync_hour=0,  # midnight — day boundary
+        )
 
         self._running = False
 
@@ -92,7 +120,6 @@ class IntelligenceNode:
         slm_cfg = self.config.get("slm_matrix", {})
         models = slm_cfg.get("models", [])
         if not models:
-            # Default model set
             models = [
                 {"name": "classifier", "type": "sequence_classification",
                  "hidden_dim": 256, "num_layers": 4, "num_heads": 4,
@@ -129,7 +156,6 @@ class IntelligenceNode:
             engine_url=bcfg.get("decision_engine_url", "http://localhost:8000"),
             sync_interval=bcfg.get("sync_interval", 30),
         )
-        # Try to load local engine.yaml
         engine_yaml = Path("decision-engine/config/engine.yaml")
         if engine_yaml.exists():
             bridge.load_local_config(str(engine_yaml))
@@ -181,9 +207,55 @@ class IntelligenceNode:
             "cycle_time_ms": result.cycle_time_ms,
         }
 
+    def record_decision(self, pipeline_result: dict, title: str = "",
+                        domain: str = "general") -> dict:
+        """Record a decision engine pipeline result into memory.
+
+        This is the primary integration point — call this after every
+        process_decision() in the decision engine pipeline.
+        """
+        record = self.recorder.record(pipeline_result, title, domain)
+
+        # Queue high-value decisions for immediate remote backup
+        if record.net_value >= 20 or record.verdict in ("block", "escalate_tier_2", "escalate_tier_3"):
+            journal_path = self.recorder.journal_path / datetime.now().strftime("%Y-%m-%d")
+            for f in journal_path.iterdir() if journal_path.exists() else []:
+                if record.decision_id in f.name:
+                    self.backup.queue_important(f)
+
+        return {
+            "recorded": True,
+            "decision_id": record.decision_id,
+            "verdict": record.verdict,
+            "importance": self.recorder._compute_importance(record),
+            "memory_layers": ["working", "episodic"] + (
+                ["semantic"] if record.net_value >= 20 else []
+            ) + (["procedural"] if record.verdict == "auto_execute" else []),
+        }
+
     def consolidate_memory(self) -> dict:
         """Run memory consolidation cycle."""
         return self.memory.consolidate()
+
+    # ── Vault Operations ────────────────────────────────────────────────────
+
+    def store_credential(self, key: str, value: str, service: str = "") -> dict:
+        """Store a credential in the encrypted vault."""
+        entry = self.vault.store(key, value, service=service)
+        # Immediately sync vault to remote
+        blob = self.vault.get_encrypted_blob()
+        if blob and self.backup.remote_repo:
+            self.backup.sync_vault(blob)
+        return {"stored": True, "key": key, "service": service}
+
+    def get_credential(self, key: str) -> str | None:
+        """Retrieve a credential from the vault."""
+        return self.vault.get(key)
+
+    def import_env_credentials(self, keys: list[str]) -> dict:
+        """Import credentials from environment variables into the vault."""
+        count = self.vault.store_env_keys(keys)
+        return {"imported": count, "keys": keys}
 
     # ── Lifecycle ───────────────────────────────────────────────────────────
 
@@ -192,8 +264,11 @@ class IntelligenceNode:
         self._running = True
         logger.info("Node %s started", self.node_id)
 
-        # Background consolidation loop
-        asyncio.create_task(self._consolidation_loop())
+        # Ensure backup repo exists
+        self.backup.ensure_remote_repo()
+
+        # Start sync daemon (handles consolidation + backup loops)
+        await self.daemon.start()
 
         # Background bridge sync
         if self.bridge:
@@ -202,18 +277,14 @@ class IntelligenceNode:
     async def stop(self) -> None:
         """Gracefully stop the node."""
         self._running = False
+
+        # Stop daemon (runs final sync)
+        await self.daemon.stop()
+
+        # Save all persistent state
         self.memory.save()
         await self.bridge.close()
         logger.info("Node %s stopped", self.node_id)
-
-    async def _consolidation_loop(self) -> None:
-        interval = self.config.get("memory", {}).get(
-            "episodic", {}
-        ).get("consolidation_interval", 60)
-
-        while self._running:
-            await asyncio.sleep(interval)
-            self.memory.consolidate()
 
     async def _bridge_sync_loop(self) -> None:
         while self._running:
@@ -238,5 +309,12 @@ class IntelligenceNode:
             },
             "society": self.society.health(),
             "memory": self.memory.health(),
+            "vault": self.vault.health(),
+            "recorder": self.recorder.stats,
+            "daemon": self.daemon.health(),
             "google": self.google.health(),
         }
+
+
+# Needed for record_decision's date check
+from datetime import datetime
