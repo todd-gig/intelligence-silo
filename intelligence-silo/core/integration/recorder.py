@@ -23,6 +23,8 @@ from pathlib import Path
 import torch
 import numpy as np
 
+from ..intelligence.dimensions import IntelligenceProfile, infer_profile_from_decision
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,6 +42,7 @@ class DecisionRecord:
     value_classification: str
     alignment_composite: float
     executive_summary: str
+    intelligence_profile: IntelligenceProfile = field(default_factory=IntelligenceProfile)
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     raw_result: dict = field(default_factory=dict)
 
@@ -106,6 +109,7 @@ class DecisionMemoryRecorder:
 
         # 2. Episodic memory — full decision experience
         importance = self._compute_importance(record)
+        intel = record.intelligence_profile.to_dict()
         self.memory.episodic.record(
             embedding=embedding.detach().cpu().numpy(),
             context={
@@ -121,6 +125,11 @@ class DecisionMemoryRecorder:
                 "alignment": record.alignment_composite,
                 "summary": record.executive_summary[:500],
                 "category": record.domain,
+                # Intelligence dimensions
+                "intelligence_composite": intel["composite"],
+                "intelligence_gaps": intel["gaps"],
+                "memory_tags": intel["memory_tags"],
+                "subject_domain": intel["subject_domain"],
             },
             outcome={"verdict": record.verdict, "confidence": record.confidence},
             importance=importance,
@@ -205,6 +214,27 @@ class DecisionMemoryRecorder:
         exec_packet = result.get("execution", result.get("execution_packet", {}))
         verdict = exec_packet.get("verdict", result.get("recommended_action", "unknown"))
 
+        # Infer intelligence profile from pipeline signals + any explicit profile supplied
+        intel_data = result.get("intelligence_profile")
+        if intel_data and isinstance(intel_data, dict):
+            dims = intel_data.get("dimensions", {})
+            intel = IntelligenceProfile(
+                subject=dims.get("subject", 0.0),
+                training=dims.get("training", 0.0),
+                education=dims.get("education", 0.0),
+                science=dims.get("science", 0.0),
+                knowledge=dims.get("knowledge", 0.0),
+                strategy=dims.get("strategy", 0.0),
+                success=dims.get("success", 0.0),
+                tools=dims.get("tools", 0.0),
+                information=dims.get("information", 0.0),
+                experience=dims.get("experience", 0.0),
+                subject_domain=intel_data.get("subject_domain", domain),
+                active_tools=intel_data.get("active_tools", []),
+            )
+        else:
+            intel = infer_profile_from_decision({**result, "domain": domain})
+
         return DecisionRecord(
             decision_id=result.get("decision_id", f"DEC-{int(time.time())}"),
             title=title or result.get("title", "Untitled Decision"),
@@ -217,6 +247,7 @@ class DecisionMemoryRecorder:
             value_classification=result.get("value_classification", "unknown"),
             alignment_composite=result.get("alignment_composite", 0.0),
             executive_summary=result.get("executive_summary", ""),
+            intelligence_profile=intel,
             raw_result=result,
         )
 
