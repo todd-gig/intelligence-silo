@@ -53,14 +53,26 @@ class DecisionEngineBridge:
     4. LEARN: Feed engine outcomes back to the neural models
 
     The bridge operates in two modes:
-    - LOCAL: reads engine.yaml directly (same machine)
-    - REMOTE: communicates via the decision engine's FastAPI endpoints
+    - LOCAL: reads engine.yaml directly (same machine / dev)
+    - REMOTE: communicates with the live SIE API Gateway on Cloud Run
+
+    Default URL is the live SIE production endpoint. Override with:
+      DECISION_ENGINE_URL environment variable  (any deployment)
+      engine_url constructor parameter          (programmatic)
+
+    SIE Production: https://api-gateway-service-rjmcrtvuzq-uc.a.run.app
+    Local dev:      http://localhost:8000
     """
 
-    def __init__(self, engine_url: str = "http://localhost:8000",
+    SIE_PRODUCTION_URL = "https://api-gateway-service-rjmcrtvuzq-uc.a.run.app"
+
+    def __init__(self, engine_url: str | None = None,
                  engine_yaml_path: str | None = None,
                  sync_interval: float = 30.0):
-        self.engine_url = engine_url.rstrip("/")
+        import os
+        # Priority: explicit arg > env var > SIE production endpoint
+        resolved = engine_url or os.environ.get("DECISION_ENGINE_URL") or self.SIE_PRODUCTION_URL
+        self.engine_url = resolved.rstrip("/")
         self.engine_yaml_path = engine_yaml_path
         self.sync_interval = sync_interval
         self.weights = EngineWeights()
