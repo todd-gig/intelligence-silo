@@ -1,16 +1,20 @@
-"""FastAPI server — exposes the intelligence node as a network service for mesh communication."""
+"""FastAPI server — exposes the intelligence node as a network service for mesh communication.
+
+Environment variables:
+    SILO_CONFIG_PATH   Path to silo.yaml (default: config/silo.yaml)
+    PORT               Uvicorn listen port when run directly (default: 8080)
+"""
 
 from __future__ import annotations
 
+import os
+
 import torch
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Intelligence Silo Node", version="0.1.0")
 
-# Node is initialized at startup (see `create_app`)
-_node = None
-
+# ── Request / Response schemas ────────────────────────────────────────────────
 
 class ProcessRequest(BaseModel):
     input_data: dict
@@ -40,18 +44,33 @@ class MemoryQueryRequest(BaseModel):
     top_k: int = 5
 
 
+# ── App factory ───────────────────────────────────────────────────────────────
+
 def create_app(config_path: str = "config/silo.yaml") -> FastAPI:
-    """Create the FastAPI app with an initialized node."""
+    """Create and fully configure the FastAPI application with an initialized node."""
     from .node import IntelligenceNode
 
-    global _node
-    _node = IntelligenceNode(config_path=config_path)
+    _app = FastAPI(
+        title="Intelligence Silo Node",
+        version="0.1.0",
+        description=(
+            "Society of Minds neural intelligence node — SLM matrix, "
+            "hierarchical memory, and multi-agent deliberation."
+        ),
+    )
 
-    @app.get("/health")
+    node = IntelligenceNode(config_path=config_path)
+
+    @_app.get("/health", tags=["meta"])
     async def health():
-        return _node.health()
+        return node.health()
 
-    @app.post("/process", response_model=ProcessResponse)
+    @_app.get("/training/status", tags=["training"])
+    async def training_status():
+        """Return the current retrain trigger status and progress."""
+        return node.training_status()
+
+    @_app.post("/process", response_model=ProcessResponse, tags=["inference"])
     async def process(req: ProcessRequest):
         input_ids = None
         if req.input_ids:
@@ -62,35 +81,52 @@ def create_app(config_path: str = "config/silo.yaml") -> FastAPI:
             query_emb = torch.tensor(req.query_embedding).unsqueeze(0)
 
         if req.deliberate:
-            result = _node.deliberate(req.input_data, input_ids, query_emb)
+            result = node.deliberate(req.input_data, input_ids, query_emb)
         else:
-            result = _node.process(req.input_data, input_ids, query_emb)
+            result = node.process(req.input_data, input_ids, query_emb)
 
         return ProcessResponse(**result)
 
-    @app.post("/memory/store")
+    @_app.post("/decisions/record", tags=["decisions"])
+    async def record_decision(body: dict):
+        """Record a pipeline result into the memory hierarchy."""
+        pipeline_result = body.get("pipeline_result", body)
+        title = body.get("title", "")
+        domain = body.get("domain", "general")
+        return node.record_decision(pipeline_result, title=title, domain=domain)
+
+    @_app.post("/memory/store", tags=["memory"])
     async def memory_store(req: MemoryStoreRequest):
         emb = torch.tensor(req.embedding)
-        _node.memory.encode_and_store(req.key, emb, req.context, req.priority)
+        node.memory.encode_and_store(req.key, emb, req.context, req.priority)
         return {"stored": True, "key": req.key}
 
-    @app.post("/memory/query")
+    @_app.post("/memory/query", tags=["memory"])
     async def memory_query(req: MemoryQueryRequest):
         emb = torch.tensor(req.embedding)
-        results = _node.memory.query_flat(emb, top_k=req.top_k)
+        results = node.memory.query_flat(emb, top_k=req.top_k)
         return {"results": results}
 
-    @app.post("/memory/consolidate")
+    @_app.post("/memory/consolidate", tags=["memory"])
     async def memory_consolidate():
-        stats = _node.consolidate_memory()
+        stats = node.consolidate_memory()
         return stats
 
-    @app.get("/matrix/info")
+    @_app.get("/matrix/info", tags=["matrix"])
     async def matrix_info():
-        return _node.matrix.performance_report()
+        return node.matrix.performance_report()
 
-    @app.get("/society/health")
+    @_app.get("/society/health", tags=["society"])
     async def society_health():
-        return _node.society.health()
+        return node.society.health()
 
-    return app
+    return _app
+
+
+# ── Module-level app — uvicorn loads this directly ────────────────────────────
+# create_app() is called here so that `uvicorn core.api:app` gets a fully
+# initialized application with all routes registered and the node running.
+
+app = create_app(
+    config_path=os.environ.get("SILO_CONFIG_PATH", "config/silo.yaml")
+)

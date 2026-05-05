@@ -1,9 +1,20 @@
-"""Node — the top-level runtime that ties everything together."""
+"""Node — the top-level runtime that ties everything together.
+
+Environment variable overrides (all optional, take precedence over silo.yaml):
+    DECISION_ENGINE_URL   Bridge URL (e.g. https://decision-engine-xxx-uc.a.run.app)
+    SILO_DATA_DIR         Base directory for all persistent data (default: data)
+    VAULT_PASSPHRASE      Stable passphrase for vault encryption — disables machine-binding;
+                          required for Cloud Run (inject via Secret Manager)
+    VAULT_DISABLED        Set to "1" or "true" to skip vault init entirely
+    GCS_BUCKET            Override google.gcs.bucket
+    GCP_PROJECT_ID        Override google.project_id
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -33,7 +44,7 @@ class IntelligenceNode:
     - Society of Minds (7-role multi-agent orchestrator)
     - Decision Engine Bridge (bidirectional sync)
     - Decision Memory Recorder (auto-records all pipeline results)
-    - Secure Vault (encrypted local credential storage)
+    - Secure Vault (encrypted local credential storage; disabled via VAULT_DISABLED)
     - Git Backup Manager (private repo failsafe)
     - Sync Daemon (daily consolidation + midnight full sync)
     - Google Services (GCS, Vertex AI, Firebase)
@@ -48,8 +59,15 @@ class IntelligenceNode:
         self.node_name = self.config.get("node", {}).get("name", "primary")
         self.device = self._resolve_device()
 
-        logger.info("Initializing Intelligence Node: %s (%s) on %s",
-                     self.node_name, self.node_id, self.device)
+        # Data directory — env var takes precedence over config, then default "data"
+        self.data_dir = Path(os.environ.get("SILO_DATA_DIR", "data"))
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+
+        # Apply environment variable overrides to config (Cloud Run / container deployments)
+        self._apply_env_overrides()
+
+        logger.info("Initializing Intelligence Node: %s (%s) on %s, data_dir=%s",
+                     self.node_name, self.node_id, self.device, self.data_dir)
 
         # Build subsystems
         self.memory = self._build_memory()
@@ -58,11 +76,20 @@ class IntelligenceNode:
         self.bridge = self._build_bridge()
         self.google = self._build_google()
 
-        # Integration layer
-        self.vault = SecureVault()
+        # Vault — skip if VAULT_DISABLED; use VAULT_PASSPHRASE for stable cross-instance key
+        vault_disabled = os.environ.get("VAULT_DISABLED", "").lower() in ("1", "true", "yes")
+        if vault_disabled:
+            logger.info("Vault disabled (VAULT_DISABLED=true) — credentials injected via env vars")
+            self.vault = _NullVault()
+        else:
+            vault_passphrase = os.environ.get("VAULT_PASSPHRASE")
+            self.vault = SecureVault(passphrase=vault_passphrase)
 
         # Retrain trigger — watches decision count, fires background training at threshold
         _train_cfg = self.config.get("training", {})
+        checkpoint_dir = str(self.data_dir / "checkpoints")
+        state_file = str(self.data_dir / "training_state.json")
+
         self.retrain_trigger = RetrainTrigger(
             config=TriggerConfig(
                 min_decisions=_train_cfg.get("min_decisions", 50),
@@ -70,16 +97,16 @@ class IntelligenceNode:
                 n_synthetic=_train_cfg.get("n_synthetic", 1000),
                 epochs=_train_cfg.get("epochs", 60),
                 device=_train_cfg.get("device", "auto"),
-                checkpoint_dir=_train_cfg.get("checkpoint_dir", "data/checkpoints"),
-                state_file=_train_cfg.get("state_file", "data/training_state.json"),
+                checkpoint_dir=checkpoint_dir,
+                state_file=state_file,
             ),
-            journal_dir=str(Path("data") / "decision_journal"),
-            outcomes_file="data/learning_loop.jsonl",
+            journal_dir=str(self.data_dir / "decision_journal"),
+            outcomes_file=str(self.data_dir / "learning_loop.jsonl"),
         )
 
         self.recorder = DecisionMemoryRecorder(
             memory_hierarchy=self.memory,
-            local_journal_path=str(Path("data") / "decision_journal"),
+            local_journal_path=str(self.data_dir / "decision_journal"),
             retrain_trigger=self.retrain_trigger,
         )
         self.backup = GitBackupManager(
@@ -104,6 +131,36 @@ class IntelligenceNode:
                 return yaml.safe_load(f) or {}
         logger.warning("Config not found at %s, using defaults", self.config_path)
         return {}
+
+    def _apply_env_overrides(self) -> None:
+        """Apply environment variable overrides to the loaded config dict.
+
+        This allows Cloud Run deployments to inject service URLs and GCP config
+        without rebuilding the Docker image. Env vars take precedence over silo.yaml.
+        """
+        # Decision Engine Bridge URL
+        engine_url = os.environ.get("DECISION_ENGINE_URL")
+        if engine_url:
+            self.config.setdefault("bridge", {})["decision_engine_url"] = engine_url
+            logger.info("Bridge URL overridden by DECISION_ENGINE_URL: %s", engine_url)
+
+        # Google Cloud config
+        project_id = os.environ.get("GCP_PROJECT_ID")
+        if project_id:
+            self.config.setdefault("google", {})["project_id"] = project_id
+
+        gcs_bucket = os.environ.get("GCS_BUCKET")
+        if gcs_bucket:
+            self.config.setdefault("google", {}).setdefault("gcs", {})["bucket"] = gcs_bucket
+            # Enable Google services automatically if bucket is provided
+            self.config["google"]["enabled"] = True
+            logger.info("Google services enabled via GCS_BUCKET env var: %s", gcs_bucket)
+
+        # Semantic index persistence — redirect to SILO_DATA_DIR
+        silo_data = os.environ.get("SILO_DATA_DIR")
+        if silo_data:
+            self.config.setdefault("memory", {}).setdefault("semantic", {})["persistence_path"] = \
+                str(Path(silo_data) / "semantic_index")
 
     def _resolve_device(self) -> str:
         dev = self.config.get("node", {}).get("device", "auto")
@@ -171,8 +228,10 @@ class IntelligenceNode:
 
     def _build_bridge(self) -> DecisionEngineBridge:
         bcfg = self.config.get("bridge", {})
+        # DECISION_ENGINE_URL env var already applied in _apply_env_overrides
+        engine_url = bcfg.get("decision_engine_url", "http://localhost:8000")
         bridge = DecisionEngineBridge(
-            engine_url=bcfg.get("decision_engine_url", "http://localhost:8000"),
+            engine_url=engine_url,
             sync_interval=bcfg.get("sync_interval", 30),
         )
         engine_yaml = Path("decision-engine/config/engine.yaml")
@@ -260,29 +319,7 @@ class IntelligenceNode:
         }
 
     def training_status(self) -> dict:
-        """Return the current retrain trigger status.
-
-        Shows how many decisions have accumulated since the last training run,
-        the threshold required to trigger the next run, progress as a percentage,
-        and the results of the most recent completed run.
-
-        Example output:
-            {
-                "decisions_since_last_train": 23,
-                "threshold": 50,
-                "progress_pct": 46.0,
-                "decisions_until_trigger": 27,
-                "cooldown_remaining_seconds": 0,
-                "training_active": false,
-                "last_train_at": "2026-05-05T12:13:55Z",
-                "last_train_promoted": ["classifier", "scorer", ...],
-                "last_train_accuracies": {"classifier": 0.702, ...},
-                "total_decisions_ever": 73,
-                "runs_completed": 1,
-                "domain_distribution": {"sales": 15, "ops": 8},
-                "ready_to_trigger": false,
-            }
-        """
+        """Return the current retrain trigger status."""
         return self.retrain_trigger.status()
 
     def consolidate_memory(self) -> dict:
@@ -293,7 +330,7 @@ class IntelligenceNode:
 
     def store_credential(self, key: str, value: str, service: str = "") -> dict:
         """Store a credential in the encrypted vault."""
-        entry = self.vault.store(key, value, service=service)
+        self.vault.store(key, value, service=service)
         # Immediately sync vault to remote
         blob = self.vault.get_encrypted_blob()
         if blob and self.backup.remote_repo:
@@ -354,6 +391,7 @@ class IntelligenceNode:
                 "name": self.node_name,
                 "device": self.device,
                 "running": self._running,
+                "data_dir": str(self.data_dir),
             },
             "matrix": {
                 "total_params": self.matrix.total_params_human,
@@ -366,6 +404,48 @@ class IntelligenceNode:
             "daemon": self.daemon.health(),
             "google": self.google.health(),
         }
+
+
+# ── Null Vault ────────────────────────────────────────────────────────────────
+
+class _NullVault:
+    """No-op vault for Cloud Run deployments where credentials come from Secret Manager.
+
+    All read operations fall back to environment variables.
+    Write operations are silent no-ops.
+    Satisfies the SecureVault interface so the rest of the node code is unchanged.
+    """
+
+    def store(self, key: str, value: str, service: str = "", **kwargs) -> None:
+        logger.debug("_NullVault.store(%s) — vault disabled, credential not persisted", key)
+
+    def get(self, key: str) -> str | None:
+        return os.environ.get(key)
+
+    def has(self, key: str) -> bool:
+        return key in os.environ
+
+    def list_keys(self) -> list:
+        return []
+
+    def delete(self, key: str) -> bool:
+        return False
+
+    def store_env_keys(self, keys: list) -> int:
+        return 0
+
+    def export_to_env(self, keys: list | None = None) -> dict:
+        return {}
+
+    def get_encrypted_blob(self) -> bytes | None:
+        return None
+
+    def health(self) -> dict:
+        return {"status": "disabled", "backend": "null (VAULT_DISABLED=true)"}
+
+    @property
+    def size(self) -> int:
+        return 0
 
 
 # Needed for record_decision's date check

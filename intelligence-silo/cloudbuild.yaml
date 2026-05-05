@@ -1,0 +1,61 @@
+steps:
+  # ── Build ──────────────────────────────────────────────────────────────────
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -t
+      - gcr.io/$PROJECT_ID/intelligence-silo:$COMMIT_SHA
+      - -t
+      - gcr.io/$PROJECT_ID/intelligence-silo:latest
+      - .
+
+  # ── Push ──────────────────────────────────────────────────────────────────
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [push, gcr.io/$PROJECT_ID/intelligence-silo:$COMMIT_SHA]
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [push, gcr.io/$PROJECT_ID/intelligence-silo:latest]
+
+  # ── Deploy to Cloud Run ───────────────────────────────────────────────────
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - intelligence-silo
+      - --image=gcr.io/$PROJECT_ID/intelligence-silo:$COMMIT_SHA
+      - --region=us-central1
+      - --platform=managed
+      - --port=8080
+      - --min-instances=0
+      - --max-instances=3
+      - --memory=4Gi
+      - --cpu=2
+      - --timeout=120
+      - --concurrency=4
+      # Internal traffic only — accessed by decision-engine and gigaton-engine via service-to-service auth
+      - --ingress=internal-and-cloud-load-balancing
+      - --no-allow-unauthenticated
+      # Environment: service URLs and feature flags
+      # DECISION_ENGINE_URL must be set in Cloud Run console or via --set-env-vars
+      # once the decision-engine service URL is known. Placeholder shown here.
+      - --set-env-vars=SILO_DATA_DIR=/data,VAULT_DISABLED=true,DECISION_ENGINE_URL=$$DECISION_ENGINE_URL
+      # Persistent data volume — Cloud Run NFS or GCS FUSE mount
+      # Configure in Cloud Run console: Mount path /data → NFS/GCS bucket
+      # Uncomment and fill in when volume is provisioned:
+      # - --add-volume=name=silo-data,type=cloud-storage,bucket=$$GCS_BUCKET
+      # - --add-volume-mount=volume=silo-data,mount-path=/data
+      # Secrets injected as env vars (configure in Cloud Run console):
+      # - --set-secrets=ANTHROPIC_API_KEY=anthropic-api-key:latest
+      # - --set-secrets=VAULT_PASSPHRASE=silo-vault-passphrase:latest
+      # - --set-secrets=GCP_PROJECT_ID=gcp-project-id:latest
+      # - --set-secrets=GCS_BUCKET=silo-gcs-bucket:latest
+
+images:
+  - gcr.io/$PROJECT_ID/intelligence-silo:$COMMIT_SHA
+  - gcr.io/$PROJECT_ID/intelligence-silo:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  # Neural models need more build memory
+  machineType: 'E2_HIGHCPU_8'

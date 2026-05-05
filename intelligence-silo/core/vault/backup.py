@@ -60,10 +60,16 @@ class GitBackupManager:
     """
 
     def __init__(self, local_data_root: Path, remote_repo: str | None = None,
-                 gh_binary: str = "/opt/homebrew/bin/gh"):
+                 gh_binary: str | None = None):
         self.local_root = local_data_root
         self.remote_repo = remote_repo
-        self.gh = gh_binary
+        # Resolve gh binary: explicit arg > GH_BINARY env > PATH search > macOS Homebrew fallback
+        self.gh = (
+            gh_binary
+            or os.environ.get("GH_BINARY")
+            or shutil.which("gh")
+            or "/opt/homebrew/bin/gh"
+        )
         self.backup_dir = Path.home() / ".intelligence-silo" / "backup-staging"
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.manifest = self._load_manifest()
