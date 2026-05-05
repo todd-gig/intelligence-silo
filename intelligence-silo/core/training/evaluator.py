@@ -48,7 +48,9 @@ class ModelEvaluator:
             return EvaluationReport(model_name=model_name, n_samples=0, task_type="unknown")
 
         from .trainer import SLMTrainer, TrainingConfig
-        trainer = SLMTrainer(TrainingConfig(device="cpu"))
+        # Inherit device from model to avoid MPS↔CPU tensor mismatch
+        model_device = next(slm.parameters()).device
+        trainer = SLMTrainer(TrainingConfig(device=str(model_device)))
         task_type = trainer.LOSS_REGISTRY.get(model_name, ("regression", 1))[0]
 
         X = torch.stack([r.input_tensor for r in records])

@@ -7,8 +7,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .data_generator import DecisionDataGenerator, TrainingConfig
-from .trainer import SLMTrainer, TrainingResult
+from .data_generator import DecisionDataGenerator
+from .trainer import SLMTrainer, TrainingConfig, TrainingResult
 from .evaluator import ModelEvaluator, EvaluationReport
 from .promotion import PromotionGate
 
@@ -89,9 +89,9 @@ class TrainingPipeline:
 
         result = PipelineResult(n_synthetic=n_synthetic, n_historical=n_hist)
 
-        # 2. Train each model
+        # 2. Build SLM matrix from config
         from ..models.matrix import SLMMatrix
-        matrix = SLMMatrix()
+        matrix = self._build_matrix()
 
         for model_name in target_models:
             records = all_records.get(model_name, [])
@@ -149,6 +149,38 @@ class TrainingPipeline:
         dest = dest_dir / f"{model_name}.pt"
         shutil.copy2(src, dest)
         logger.info("[%s] Production weights saved → %s", model_name, dest)
+
+    def _build_matrix(self):
+        """Build SLMMatrix from silo.yaml config, with a hardcoded fallback."""
+        from ..models.matrix import SLMMatrix
+        import yaml
+        from pathlib import Path
+
+        config_path = Path(__file__).parent.parent.parent / "config" / "silo.yaml"
+        if config_path.exists():
+            with open(config_path) as f:
+                cfg = yaml.safe_load(f)
+            model_configs = cfg.get("slm_matrix", {}).get("models", [])
+            router_cfg = cfg.get("slm_matrix", {}).get("router", {})
+        else:
+            # Fallback: hardcoded 6-model spec matching silo.yaml defaults
+            model_configs = [
+                {"name": "classifier",      "type": "sequence_classification", "hidden_dim": 256, "num_layers": 4, "num_heads": 4, "vocab_size": 8192, "num_classes": 32},
+                {"name": "scorer",          "type": "regression",              "hidden_dim": 256, "num_layers": 4, "num_heads": 4, "vocab_size": 8192, "output_dim": 12},
+                {"name": "trust_assessor",  "type": "sequence_classification", "hidden_dim": 192, "num_layers": 3, "num_heads": 4, "vocab_size": 8192, "num_classes": 5},
+                {"name": "memory_encoder",  "type": "encoder",                 "hidden_dim": 384, "num_layers": 6, "num_heads": 8, "vocab_size": 8192},
+                {"name": "pattern_detector","type": "regression",              "hidden_dim": 128, "num_layers": 2, "num_heads": 4, "vocab_size": 8192, "output_dim": 1},
+                {"name": "causal_predictor","type": "regression",              "hidden_dim": 192, "num_layers": 3, "num_heads": 4, "vocab_size": 8192, "output_dim": 1},
+            ]
+            router_cfg = {}
+
+        return SLMMatrix(
+            configs=model_configs,
+            router_strategy=router_cfg.get("strategy", "attention"),
+            fusion_method=router_cfg.get("fusion_method", "weighted_vote"),
+            confidence_floor=router_cfg.get("confidence_floor", 0.6),
+            device=self.config.device,
+        )
 
     def _save_report(self, result: PipelineResult) -> None:
         report_dir = Path(self.checkpoint_dir)

@@ -219,19 +219,19 @@ class SLMTrainer:
 
     def _encode(self, slm: SmallLanguageModel, x: torch.Tensor) -> torch.Tensor:
         """Run x through the SLM encoder to get a hidden representation."""
-        # SLM expects [batch, seq_len, vocab/embed]. We have [batch, features].
-        # Project features into the model's embedding space by repeating across seq_len.
-        batch = x.size(0)
+        # Always co-locate x with the model — evaluator may pass CPU tensors
+        # while the model lives on MPS or CUDA.
+        model_device = next(slm.parameters()).device
+        x = x.to(model_device)
+
         hidden = slm.config.hidden_dim
-        # Simple linear projection: treat each feature as a 1-token sequence
         if not hasattr(self, "_proj"):
             self._proj = {}
-        key = (x.device, slm.config.name)
+        key = (str(model_device), slm.config.name)
         if key not in self._proj:
-            self._proj[key] = nn.Linear(FEATURE_DIM, hidden, bias=False).to(x.device)
+            self._proj[key] = nn.Linear(FEATURE_DIM, hidden, bias=False).to(model_device)
         proj = self._proj[key]
         embedded = proj(x).unsqueeze(1)  # [batch, 1, hidden_dim]
-        # Pass through transformer blocks
         for block in slm.blocks:
             embedded = block(embedded)
         return embedded.squeeze(1)  # [batch, hidden_dim]

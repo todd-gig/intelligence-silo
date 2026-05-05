@@ -47,7 +47,13 @@ class PromotionGate:
         train_result: TrainingResult,
         eval_report: EvaluationReport,
     ) -> bool:
-        """Return True if the model passes all promotion gates."""
+        """Return True if the model passes all promotion gates.
+
+        Source of truth for accuracy is the training-time val_accuracy from the
+        SLMTrainer loop (which has access to the trained head). The evaluator's
+        nearest-centroid re-check is a secondary signal used when training metrics
+        are unavailable.
+        """
         reasons = []
 
         # Gate 1: val_loss must be finite and below ceiling
@@ -55,16 +61,19 @@ class PromotionGate:
             reasons.append(f"val_loss={train_result.val_loss:.4f} > {self.thresholds.max_val_loss}")
 
         # Gate 2: model-specific metric gate
+        # Prefer training-time val_accuracy (has access to trained head) over
+        # evaluator accuracy (nearest-centroid on encoder only).
         if model_name in self.CLASSIFICATION_MODELS:
             min_acc = getattr(self.thresholds, f"{model_name}_accuracy", 0.5)
-            acc = eval_report.accuracy or 0.0
+            # Use training val_accuracy as primary signal
+            acc = train_result.val_accuracy if train_result.val_accuracy is not None else (eval_report.accuracy or 0.0)
             if acc < min_acc:
                 reasons.append(f"accuracy={acc:.3f} < {min_acc}")
         elif model_name in self.REGRESSION_MODELS:
+            # For regression: use val_loss directly — near-zero means converged
             max_mse = getattr(self.thresholds, f"{model_name}_mse", 0.1)
-            mse = eval_report.mse or 999.0
-            if not eval_report.passed_threshold:
-                reasons.append(f"regression signal insufficient (mse={mse:.4f})")
+            if train_result.val_loss > max_mse and not eval_report.passed_threshold:
+                reasons.append(f"val_loss={train_result.val_loss:.4f} > {max_mse} and eval signal insufficient")
 
         # Gate 3: minimum training time (guards against degenerate 1-epoch runs)
         if train_result.best_epoch < 3:

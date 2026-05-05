@@ -1,0 +1,75 @@
+{
+  "n_synthetic": 3000,
+  "n_historical": 0,
+  "promoted": [
+    "classifier",
+    "scorer",
+    "trust_assessor",
+    "memory_encoder",
+    "pattern_detector",
+    "causal_predictor"
+  ],
+  "failed": [],
+  "models": {
+    "classifier": {
+      "epochs_run": 16,
+      "train_loss": 0.7605282239615917,
+      "val_loss": 1.014986276626587,
+      "val_accuracy": 0.7022222222222222,
+      "best_epoch": 16,
+      "duration_seconds": 36.848395109176636,
+      "promoted": true,
+      "checkpoint_path": "data/checkpoints/classifier_best.pt"
+    },
+    "scorer": {
+      "epochs_run": 8,
+      "train_loss": 0.00010949188299491652,
+      "val_loss": 4.3892113126275945e-05,
+      "val_accuracy": null,
+      "best_epoch": 8,
+      "duration_seconds": 21.465851068496704,
+      "promoted": true,
+      "checkpoint_path": "data/checkpoints/scorer_best.pt"
+    },
+    "trust_assessor": {
+      "epochs_run": 20,
+      "train_loss": 0.3667067773640156,
+      "val_loss": 0.49115147814154625,
+      "val_accuracy": 0.7022222222222222,
+      "best_epoch": 20,
+      "duration_seconds": 29.314340114593506,
+      "promoted": true,
+      "checkpoint_path": "data/checkpoints/trust_assessor_best.pt"
+    },
+    "memory_encoder": {
+      "epochs_run": 28,
+      "train_loss": 0.0002497365338058444,
+      "val_loss": 0.00022213008560356684,
+      "val_accuracy": null,
+      "best_epoch": 28,
+      "duration_seconds": 74.0591230392456,
+      "promoted": true,
+      "checkpoint_path": "data/checkpoints/memory_encoder_best.pt"
+    },
+    "pattern_detector": {
+      "epochs_run": 22,
+      "train_loss": 0.004083011394301607,
+      "val_loss": 0.0020930093880847656,
+      "val_accuracy": null,
+      "best_epoch": 22,
+      "duration_seconds": 37.68110489845276,
+      "promoted": true,
+      "checkpoint_path": "data/checkpoints/pattern_detector_best.pt"
+    },
+    "causal_predictor": {
+      "epochs_run": 12,
+      "train_loss": 0.0037823756691068413,
+      "val_loss": 0.004149098502239212,
+      "val_accuracy": null,
+      "best_epoch": 12,
+      "duration_seconds": 46.802292346954346,
+      "promoted": true,
+      "checkpoint_path": "data/checkpoints/causal_predictor_best.pt"
+    }
+  }
+}
