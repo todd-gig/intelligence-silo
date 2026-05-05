@@ -63,12 +63,16 @@ class DecisionMemoryRecorder:
     """
 
     def __init__(self, memory_hierarchy, embed_model=None,
-                 local_journal_path: str = "data/decision_journal"):
+                 local_journal_path: str = "data/decision_journal",
+                 retrain_trigger=None):
         """
         Args:
             memory_hierarchy: MemoryHierarchy from the intelligence silo
             embed_model: optional embedding model; falls back to hash-based embeddings
             local_journal_path: where to persist decision journal files
+            retrain_trigger: optional RetrainTrigger; if provided, tick() is called
+                             after every successful record() so the training counter
+                             advances automatically.
         """
         self.memory = memory_hierarchy
         self.embed_model = embed_model
@@ -76,6 +80,7 @@ class DecisionMemoryRecorder:
         self.journal_path.mkdir(parents=True, exist_ok=True)
         self._records_today: list[DecisionRecord] = []
         self._total_recorded: int = 0
+        self._retrain_trigger = retrain_trigger
 
     def record(self, pipeline_result: dict, decision_title: str = "",
                domain: str = "general") -> DecisionRecord:
@@ -177,6 +182,25 @@ class DecisionMemoryRecorder:
             record.decision_id, record.verdict, record.net_value,
             record.trust_tier, importance,
         )
+
+        # 6. Advance retrain counter — non-blocking, fires background thread at threshold
+        if self._retrain_trigger is not None:
+            try:
+                triggered = self._retrain_trigger.tick(
+                    decision_id=record.decision_id,
+                    domain=record.domain,
+                    verdict=record.verdict,
+                )
+                if triggered:
+                    st = self._retrain_trigger.status()
+                    logger.info(
+                        "RETRAIN TRIGGERED after %d decisions (run #%d starting in background)",
+                        st["decisions_since_last_train"] + st["threshold"],
+                        st["runs_completed"] + 1,
+                    )
+            except Exception as exc:
+                logger.debug("Retrain trigger tick failed (non-fatal): %s", exc)
+
         return record
 
     def get_daily_records(self) -> list[DecisionRecord]:

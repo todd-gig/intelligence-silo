@@ -17,6 +17,7 @@ from .trainer import SLMTrainer, TrainingConfig
 from .pipeline import TrainingPipeline
 from .evaluator import ModelEvaluator, EvaluationReport
 from .promotion import PromotionGate
+from .trigger import RetrainTrigger, TriggerConfig, TrainState
 
 __all__ = [
     "DecisionDataGenerator",
@@ -27,4 +28,7 @@ __all__ = [
     "ModelEvaluator",
     "EvaluationReport",
     "PromotionGate",
+    "RetrainTrigger",
+    "TriggerConfig",
+    "TrainState",
 ]

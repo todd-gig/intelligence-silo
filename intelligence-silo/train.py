@@ -25,6 +25,10 @@ logger = logging.getLogger("train")
 
 def main():
     parser = argparse.ArgumentParser(description="Train the intelligence silo SLM matrix")
+    parser.add_argument("--status", action="store_true",
+                        help="Show current training trigger status and exit")
+    parser.add_argument("--force", action="store_true",
+                        help="Force a retrain now regardless of threshold/cooldown")
     parser.add_argument("--epochs", type=int, default=50, help="Training epochs (default: 50)")
     parser.add_argument("--synthetic", type=int, default=2000, help="Synthetic samples per run (default: 2000)")
     parser.add_argument("--models", nargs="+", default=None,
@@ -50,6 +54,63 @@ def main():
 
     from core.training.pipeline import TrainingPipeline
     from core.training.trainer import TrainingConfig
+    from core.training.trigger import RetrainTrigger, TriggerConfig
+
+    # ── Status mode ──────────────────────────────────────────────────────────
+    if args.status:
+        trigger = RetrainTrigger(
+            config=TriggerConfig(
+                checkpoint_dir=args.checkpoint_dir,
+                state_file=str(Path(args.checkpoint_dir).parent / "training_state.json"),
+            )
+        )
+        st = trigger.status()
+        bar_width = 30
+        filled = int(bar_width * st["progress_pct"] / 100)
+        bar = "█" * filled + "░" * (bar_width - filled)
+
+        print("\n── Intelligence Silo — Training Status ──────────────────────")
+        print(f"  Decisions accumulated : {st['decisions_since_last_train']:>6}  /  {st['threshold']} threshold")
+        print(f"  Progress              : [{bar}] {st['progress_pct']:.1f}%")
+        print(f"  Until next trigger    : {st['decisions_until_trigger']} more decisions")
+        if st["cooldown_remaining_seconds"] > 0:
+            mins = st["cooldown_remaining_seconds"] // 60
+            print(f"  Cooldown remaining    : {mins}m {st['cooldown_remaining_seconds'] % 60}s")
+        print(f"  Training active       : {'YES — running now' if st['training_active'] else 'No'}")
+        print(f"  Runs completed        : {st['runs_completed']}")
+        print(f"  Total decisions ever  : {st['total_decisions_ever']}")
+        if st["last_train_at"]:
+            print(f"  Last run at           : {st['last_train_at']}")
+            print(f"  Last promoted         : {', '.join(st['last_train_promoted']) or 'none'}")
+            if st["last_train_accuracies"]:
+                print("  Last accuracies       :")
+                for m, acc in st["last_train_accuracies"].items():
+                    print(f"    {m:<22} {acc:.1%}")
+        if st["domain_distribution"]:
+            print(f"  Domain distribution   : {st['domain_distribution']}")
+        print("─────────────────────────────────────────────────────────────\n")
+        sys.exit(0)
+
+    # ── Force-trigger mode ───────────────────────────────────────────────────
+    if args.force:
+        trigger = RetrainTrigger(
+            config=TriggerConfig(
+                epochs=args.epochs,
+                n_synthetic=args.synthetic,
+                device=args.device,
+                checkpoint_dir=args.checkpoint_dir,
+                state_file=str(Path(args.checkpoint_dir).parent / "training_state.json"),
+            ),
+            journal_dir=args.journal_dir,
+            outcomes_file=args.outcomes_file,
+        )
+        logger.info("Force-triggering retrain...")
+        trigger.force_trigger()
+        # Wait for the background thread to finish
+        if trigger._training_thread:
+            trigger._training_thread.join()
+        print(trigger.status())
+        sys.exit(0)
 
     config = TrainingConfig(
         epochs=args.epochs,

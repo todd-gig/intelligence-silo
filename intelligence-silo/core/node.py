@@ -19,6 +19,7 @@ from .integration.recorder import DecisionMemoryRecorder
 from .integration.sync_daemon import SyncDaemon
 from .vault.vault import SecureVault
 from .vault.backup import GitBackupManager
+from .training.trigger import RetrainTrigger, TriggerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +60,27 @@ class IntelligenceNode:
 
         # Integration layer
         self.vault = SecureVault()
+
+        # Retrain trigger — watches decision count, fires background training at threshold
+        _train_cfg = self.config.get("training", {})
+        self.retrain_trigger = RetrainTrigger(
+            config=TriggerConfig(
+                min_decisions=_train_cfg.get("min_decisions", 50),
+                min_interval_hours=_train_cfg.get("min_interval_hours", 6.0),
+                n_synthetic=_train_cfg.get("n_synthetic", 1000),
+                epochs=_train_cfg.get("epochs", 60),
+                device=_train_cfg.get("device", "auto"),
+                checkpoint_dir=_train_cfg.get("checkpoint_dir", "data/checkpoints"),
+                state_file=_train_cfg.get("state_file", "data/training_state.json"),
+            ),
+            journal_dir=str(Path("data") / "decision_journal"),
+            outcomes_file="data/learning_loop.jsonl",
+        )
+
         self.recorder = DecisionMemoryRecorder(
             memory_hierarchy=self.memory,
             local_journal_path=str(Path("data") / "decision_journal"),
+            retrain_trigger=self.retrain_trigger,
         )
         self.backup = GitBackupManager(
             local_data_root=Path("."),
@@ -223,6 +242,7 @@ class IntelligenceNode:
                 if record.decision_id in f.name:
                     self.backup.queue_important(f)
 
+        train_st = self.retrain_trigger.status()
         return {
             "recorded": True,
             "decision_id": record.decision_id,
@@ -231,7 +251,39 @@ class IntelligenceNode:
             "memory_layers": ["working", "episodic"] + (
                 ["semantic"] if record.net_value >= 20 else []
             ) + (["procedural"] if record.verdict == "auto_execute" else []),
+            "training": {
+                "decisions_accumulated": train_st["decisions_since_last_train"],
+                "threshold": train_st["threshold"],
+                "progress_pct": train_st["progress_pct"],
+                "training_active": train_st["training_active"],
+            },
         }
+
+    def training_status(self) -> dict:
+        """Return the current retrain trigger status.
+
+        Shows how many decisions have accumulated since the last training run,
+        the threshold required to trigger the next run, progress as a percentage,
+        and the results of the most recent completed run.
+
+        Example output:
+            {
+                "decisions_since_last_train": 23,
+                "threshold": 50,
+                "progress_pct": 46.0,
+                "decisions_until_trigger": 27,
+                "cooldown_remaining_seconds": 0,
+                "training_active": false,
+                "last_train_at": "2026-05-05T12:13:55Z",
+                "last_train_promoted": ["classifier", "scorer", ...],
+                "last_train_accuracies": {"classifier": 0.702, ...},
+                "total_decisions_ever": 73,
+                "runs_completed": 1,
+                "domain_distribution": {"sales": 15, "ops": 8},
+                "ready_to_trigger": false,
+            }
+        """
+        return self.retrain_trigger.status()
 
     def consolidate_memory(self) -> dict:
         """Run memory consolidation cycle."""

@@ -128,3 +128,32 @@ distribution:
   signing_key_path: null  # HMAC signing for trust verification
   handshake_protocol: "mutual_tls"
   mesh_discovery: "mdns"  # mdns | static | gcs_registry
+
+# ── Automated Retraining ───────────────────────────────────────────────────
+# The retrain trigger fires in the background when enough real decisions
+# have accumulated since the last training run.
+#
+# Progress is always visible via node.training_status() or:
+#   python train.py --status
+training:
+  # Minimum decisions recorded since last run before triggering
+  min_decisions: 50
+
+  # Cooldown between runs — prevents thrashing on high-volume periods
+  min_interval_hours: 6.0
+
+  # Synthetic samples added alongside real data each triggered run.
+  # Lower than the initial bootstrap (3000) because real data dominates.
+  n_synthetic: 1000
+
+  # Max training epochs per triggered run
+  epochs: 60
+
+  # Device for triggered training (auto = MPS > CUDA > CPU)
+  device: "auto"
+
+  # Where checkpoints and the training report are written
+  checkpoint_dir: "data/checkpoints"
+
+  # Persisted counter state — survives process restarts
+  state_file: "data/training_state.json"
