@@ -3,3 +3,11 @@
 *.db
 *.db-shm
 *.db-wal
+
+# Sub-repos with their own .git — should not appear in this monorepo's status.
+# Each has its own remote and is collaborated on via PRs in its own repo.
+Gigaton-UI-Platform/
+admin-turtleisland/
+bella-byte/
+playa-del-carmen/
+toddcx-turtleisland/
