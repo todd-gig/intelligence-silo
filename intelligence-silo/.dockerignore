@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*.pyo
+*.egg-info
+.eggs
+dist
+build
+*.egg
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Virtual environments
+.venv
+venv
+env
+
+# Local data — these mount as volumes in Cloud Run, not baked into image
+data/
+*.db
+*.jsonl
+
+# Trained model weights (large — will be loaded from GCS or generated at runtime)
+# Remove this line if you want weights baked into the image for faster cold starts
+data/weights/
+
+# Vault and credentials — never bake into image
+~/.intelligence-silo/
+*.vault
+*.salt
+*.machine_id
+credentials.json
+service_account.json
+token.json
+*.pem
+*.key
+
+# Config overrides (local only — Cloud Run uses env vars)
+config/local_*.yaml
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# PyInstaller outputs
+dist/

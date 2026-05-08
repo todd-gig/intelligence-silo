@@ -101,6 +101,9 @@ slm_matrix:
       role: "Predicts causal chains and downstream effects"
 
 # ── Decision Engine Bridge ──────────────────────────────────────────────────
+# Local default: http://localhost:8000
+# Cloud Run: set DECISION_ENGINE_URL env var — overrides this value at runtime.
+# Example: https://decision-engine-<hash>-uc.a.run.app
 bridge:
   decision_engine_url: "http://localhost:8000"
   sync_interval: 30  # seconds

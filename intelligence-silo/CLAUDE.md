@@ -65,3 +65,21 @@ python cli.py package --name intel-node --signing-key <key>
 - FastAPI (node API)
 - safetensors (model weight serialization)
 - PyInstaller (executable packaging)
+
+---
+
+## Doctrine alignment
+
+Single source of truth for first principles, methodology, and anti-patterns:
+
+- [`decision-engine/drift_sentinel/GIGATON_CANONICAL_FIRST_PRINCIPLES.md`](https://github.com/todd-gig/decision-engine/blob/main/drift_sentinel/GIGATON_CANONICAL_FIRST_PRINCIPLES.md) — 7 non-negotiables, 15 first principles, 8 ethos filters, 17 frameworks, 12 anti-patterns
+- [`decision-engine/MASTER_FIRST_PRINCIPLES_REFERENCE.md`](https://github.com/todd-gig/decision-engine/blob/main/MASTER_FIRST_PRINCIPLES_REFERENCE.md) — thresholds, weights, formulas, decision pathways
+
+If this repo's local-first first-principle ever conflicts with the canonical doc, the canonical doc's "Ethos #5: protect sovereignty" frames the decision: this repo's local-first defaults are the canonical guidance for sovereignty, not in conflict with it.
+
+### Doctrine-driven constraints (apply here)
+
+- **CRIT-003** — every prod LLM call must carry `prompt_version` + `schema_version`
+- **CRIT-007** — every LLM call must accept `provider` + `model`; SLM matrix calls already are local-only (no provider needed) but Vertex AI fallback (silo.yaml lines 114-125) MUST satisfy CRIT-003 + CRIT-007 if/when wired
+- **B-04 open** — silo's claim to import value/penalty weights from `decision-engine/config/engine.yaml` (per "Decision Engine Bridge" above) is not yet implemented; tracked in BETA_2_GAP_LIST
+- **Slack is user-level only** — node mesh, sync daemons, and recurring tasks must not post to Slack
