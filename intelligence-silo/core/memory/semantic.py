@@ -17,6 +17,12 @@ try:
 except ImportError:
     HAS_FAISS = False
 
+try:
+    from .gcs_sync import GCSIndexSync
+    _gcs_sync: GCSIndexSync | None = GCSIndexSync()
+except Exception:  # google-cloud-storage not installed or no credentials
+    _gcs_sync = None
+
 
 @dataclass
 class SemanticEntry:
@@ -205,8 +211,16 @@ class SemanticMemory:
             with open(self.persistence_path / "id_order.json", "w") as f:
                 json.dump(ids, f)
 
+        # Push to GCS for shared-memory sync
+        if _gcs_sync is not None:
+            _gcs_sync.upload(self.persistence_path)
+
     def _load(self) -> None:
-        """Load persisted state from disk."""
+        """Load persisted state from disk (pulling from GCS first if available)."""
+        # Sync from GCS before loading — newer remote index takes precedence
+        if _gcs_sync is not None and self.persistence_path:
+            _gcs_sync.sync(self.persistence_path)
+
         if not self.persistence_path or not self.persistence_path.exists():
             return
         meta_path = self.persistence_path / "metadata.json"
