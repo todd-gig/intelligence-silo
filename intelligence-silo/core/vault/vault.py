@@ -102,7 +102,15 @@ class SecureVault:
         node = uuid.getnode()
         system = platform.system()
         machine = platform.machine()
-        raw = f"{node}:{system}:{machine}:{os.getlogin()}"
+        # os.getlogin() requires a controlling terminal — fails in Cloud Run /
+        # headless containers with OSError: [Errno 25] Inappropriate ioctl for
+        # device. Fall back to env vars (Cloud Run sets neither USER nor
+        # LOGNAME, hence the 'cloud-run' default).
+        try:
+            user = os.getlogin()
+        except OSError:
+            user = os.environ.get("USER") or os.environ.get("LOGNAME") or "cloud-run"
+        raw = f"{node}:{system}:{machine}:{user}"
         mid = hashlib.sha256(raw.encode()).hexdigest()
 
         mid_file.write_text(mid)

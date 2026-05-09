@@ -1,0 +1,86 @@
+# Cloud Build pipeline — builds the Intelligence Silo image and deploys it as
+# a Cloud Run Service. Called by Firebase Functions for stateless neural inference.
+#
+# Substitutions:
+#   _REGION        deploy region (default us-central1)
+#   _SERVICE_NAME  Cloud Run service name (default intelligence-silo)
+#   _IMAGE         Artifact Registry image path
+#
+# Trigger:
+#   gcloud builds submit --config cloudbuild.yaml . \
+#     --project=carmen-beach-properties
+#
+# Build takes ~15 minutes (PyTorch CPU wheel + sentence-transformers).
+
+substitutions:
+  _REGION: us-central1
+  _SERVICE_NAME: intelligence-silo
+  # Hardcode project (carmen-beach-properties) — Cloud Build does not expand
+  # ${PROJECT_ID} inside substitution defaults. Override via --substitutions
+  # _IMAGE=... if you ever build into a different project.
+  _IMAGE: us-central1-docker.pkg.dev/carmen-beach-properties/cloud-run-source-deploy/intelligence-silo
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - "${_IMAGE}:${COMMIT_SHA}"
+      - -t
+      - "${_IMAGE}:latest"
+      - .
+
+  - id: push-sha
+    name: gcr.io/cloud-builders/docker
+    waitFor: [build]
+    args: [push, "${_IMAGE}:${COMMIT_SHA}"]
+
+  - id: push-latest
+    name: gcr.io/cloud-builders/docker
+    waitFor: [build]
+    args: [push, "${_IMAGE}:latest"]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    waitFor: [push-sha]
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image=${_IMAGE}:${COMMIT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --port=8080
+      - --allow-unauthenticated
+      - --ingress=all
+      - --memory=4Gi
+      - --cpu=2
+      - --min-instances=0
+      - --max-instances=3
+      - --timeout=120
+      - --concurrency=4
+      - --set-env-vars=SILO_DATA_DIR=/data,VAULT_DISABLED=true,GCS_BUCKET=gigaton-silo-index,GCS_SYNC_PATH=semantic-index
+
+  - id: print-url
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    waitFor: [deploy]
+    entrypoint: gcloud
+    args:
+      - run
+      - services
+      - describe
+      - ${_SERVICE_NAME}
+      - --region=${_REGION}
+      - --format=value(status.url)
+
+images:
+  - "${_IMAGE}:${COMMIT_SHA}"
+  - "${_IMAGE}:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 1200s
