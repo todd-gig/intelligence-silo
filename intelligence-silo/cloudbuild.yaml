@@ -57,10 +57,12 @@ steps:
       - --ingress=all
       - --memory=4Gi
       - --cpu=2
-      - --min-instances=0
+      - --cpu-boost
+      - --min-instances=1
       - --max-instances=3
-      - --timeout=120
+      - --timeout=300
       - --concurrency=4
+      - --startup-probe=tcpSocket.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=5,failureThreshold=30
       - --set-env-vars=SILO_DATA_DIR=/data,VAULT_DISABLED=true,GCS_BUCKET=gigaton-silo-index,GCS_SYNC_PATH=semantic-index
 
   - id: print-url

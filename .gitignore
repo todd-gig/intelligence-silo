@@ -11,3 +11,24 @@ admin-turtleisland/
 bella-byte/
 playa-del-carmen/
 toddcx-turtleisland/
+# Added 2026-05-12 during sync reconciliation — these are separate engines that
+# should not be tracked in the intelligence-silo repo even if cloned alongside it.
+Carmen-Beach-Properties/
+MD Files/
+braintrust-knowledge-base/
+claude_decision_logic_pack/
+decision-engine/
+gigaton/
+gigaton-engine/
+gigaton-ui-system/
+master-knowledge-base/
+sales-operating-system/
+transcript-knowledge-base/
+# Locally-built artifacts + agent state
+.pytest_cache/
+.cxguy-active-agent
+gignet-installer/
+gignet-local-node/
+human-management-engine/
+ppeme/
+user-access-engine/
