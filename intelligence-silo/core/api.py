@@ -283,6 +283,189 @@ def create_app(config_path: str = "config/silo.yaml") -> FastAPI:
         stats = node.consolidate_memory()
         return stats
 
+    # ── Source Registry ──────────────────────────────────────────────────────
+    # Per Unified Source Registry doctrine (2026-05-14). Single canonical
+    # registry of memory sources per user, queried by all downstream engines
+    # (HME / PPEME / persona-engine) via SMEN substrate read pattern.
+    from . import sources as _sources_module
+
+    _sources_db = os.environ.get(
+        "SILO_SOURCES_DB",
+        os.path.join(os.path.dirname(__file__), "..", "data", "sources.db"),
+    )
+    _sources_module.init_db(_sources_db)
+
+    class _SourceAddIn(BaseModel):
+        user_id: str = Field(..., min_length=1)
+        source_type: str = Field(..., min_length=1)
+        status: str = "disconnected"
+        consent_state: dict = Field(default_factory=dict)
+        provenance_metadata: dict = Field(default_factory=dict)
+
+    class _SourceStatusIn(BaseModel):
+        status: str
+        error: str | None = None
+        mark_synced: bool = False
+
+    class _SourceConsentIn(BaseModel):
+        consent_state: dict
+
+    @_app.post("/v1/sources", tags=["sources"], status_code=201)
+    async def sources_add(payload: _SourceAddIn):
+        from fastapi import HTTPException
+        try:
+            return _sources_module.add(
+                user_id=payload.user_id,
+                source_type=payload.source_type,
+                status=payload.status,
+                consent_state=payload.consent_state,
+                provenance_metadata=payload.provenance_metadata,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+    @_app.get("/v1/sources/coverage/{user_id}", tags=["sources"])
+    async def sources_coverage(user_id: str):
+        """Summary used by the FE /sources page: connected/total + per-type detail."""
+        return _sources_module.coverage_for_user(user_id)
+
+    @_app.get("/v1/sources/{source_id}", tags=["sources"])
+    async def sources_get(source_id: str):
+        from fastapi import HTTPException
+        row = _sources_module.get(source_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"source {source_id!r} not found")
+        return row
+
+    @_app.get("/v1/sources", tags=["sources"])
+    async def sources_list(
+        user_id: str,
+        source_type: str | None = None,
+        status: str | None = None,
+    ):
+        items = _sources_module.list_for_user(user_id, source_type=source_type, status=status)
+        return {"items": items, "count": len(items)}
+
+    @_app.patch("/v1/sources/{source_id}/status", tags=["sources"])
+    async def sources_set_status(source_id: str, payload: _SourceStatusIn):
+        from fastapi import HTTPException
+        try:
+            row = _sources_module.set_status(
+                source_id, payload.status,
+                error=payload.error, mark_synced=payload.mark_synced,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"source {source_id!r} not found")
+        return row
+
+    @_app.patch("/v1/sources/{source_id}/consent", tags=["sources"])
+    async def sources_update_consent(source_id: str, payload: _SourceConsentIn):
+        from fastapi import HTTPException
+        row = _sources_module.update_consent(source_id, payload.consent_state)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"source {source_id!r} not found")
+        return row
+
+    @_app.delete("/v1/sources/{source_id}", tags=["sources"])
+    async def sources_remove(source_id: str):
+        from fastapi import HTTPException
+        if not _sources_module.remove(source_id):
+            raise HTTPException(status_code=404, detail=f"source {source_id!r} not found")
+        return {"removed": source_id}
+
+    # ── ChatGPT Export Connector (POC) ───────────────────────────────────────
+    # Accepts OpenAI's conversations.json from a ChatGPT data export.
+    # Walks conversations, windows messages, ingests via node.ingest_memory
+    # so embeddings + FAISS storage stay consistent with other memory paths.
+
+    class _ChatGPTExportIn(BaseModel):
+        user_id: str = Field(..., min_length=1)
+        conversations: list[dict] = Field(default_factory=list)
+        source_id: str | None = None
+        category: str = "chatgpt_history"
+        max_messages_per_chunk: int = 8
+
+    @_app.post("/v1/intelligence/capture/openai-export",
+               tags=["sources"], status_code=202)
+    async def capture_openai_export(payload: _ChatGPTExportIn):
+        from fastapi import HTTPException
+
+        if payload.source_id:
+            src = _sources_module.get(payload.source_id)
+            if src is None:
+                raise HTTPException(status_code=404, detail="source_id not registered")
+        else:
+            src = _sources_module.add(
+                user_id=payload.user_id,
+                source_type="chatgpt_export",
+                status="syncing",
+            )
+            _sources_module.set_status(src["source_id"], "syncing")
+
+        chunks_stored = 0
+        chunk_ids: list[str] = []
+        conversations_processed = 0
+        try:
+            for conv in payload.conversations:
+                title = conv.get("title") or "(untitled)"
+                messages = conv.get("messages") or conv.get("mapping") or []
+                if isinstance(messages, dict):
+                    flat = []
+                    for _mid, mv in messages.items():
+                        msg = mv.get("message") if isinstance(mv, dict) else None
+                        if msg and isinstance(msg, dict):
+                            flat.append(msg)
+                    messages = flat
+                conversations_processed += 1
+
+                window = payload.max_messages_per_chunk
+                for i in range(0, len(messages), window):
+                    chunk_msgs = messages[i:i + window]
+                    text_parts = []
+                    for m in chunk_msgs:
+                        author = m.get("author") or {}
+                        role = author.get("role") if isinstance(author, dict) else m.get("role", "user")
+                        content = m.get("content")
+                        if isinstance(content, dict):
+                            parts = content.get("parts") or []
+                            content = "\n".join(str(p) for p in parts)
+                        text_parts.append(f"[{role}]\n{content}")
+                    chunk_text = (
+                        f"## {title} (window {i // window + 1})\n\n"
+                        + "\n\n".join(text_parts)
+                    )
+                    result = node.ingest_memory(
+                        text=chunk_text,
+                        source=f"chatgpt:{title}",
+                        category=payload.category,
+                        author=payload.user_id,
+                        is_markdown=True,
+                        priority=1.0,
+                    )
+                    for cid in result.get("chunk_ids", []):
+                        try:
+                            _sources_module.tag_event(cid, src["source_id"])
+                        except LookupError:
+                            pass
+                        chunk_ids.append(cid)
+                        chunks_stored += 1
+
+            _sources_module.set_status(src["source_id"], "connected", mark_synced=True)
+        except Exception as exc:
+            _sources_module.set_status(src["source_id"], "error", error=str(exc))
+            raise HTTPException(status_code=500, detail=f"ingest failed: {exc}")
+
+        return {
+            "source_id": src["source_id"],
+            "user_id": payload.user_id,
+            "conversations_processed": conversations_processed,
+            "chunks_stored": chunks_stored,
+            "chunk_ids": chunk_ids[:50],
+            "status": "connected",
+        }
+
     @_app.get("/matrix/info", tags=["matrix"])
     async def matrix_info():
         return node.matrix.performance_report()
