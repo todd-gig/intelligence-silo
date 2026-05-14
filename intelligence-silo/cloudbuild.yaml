@@ -26,7 +26,7 @@ steps:
     args:
       - build
       - -t
-      - "${_IMAGE}:${COMMIT_SHA}"
+      - "${_IMAGE}:${BUILD_ID}"
       - -t
       - "${_IMAGE}:latest"
       - .
@@ -34,7 +34,7 @@ steps:
   - id: push-sha
     name: gcr.io/cloud-builders/docker
     waitFor: [build]
-    args: [push, "${_IMAGE}:${COMMIT_SHA}"]
+    args: [push, "${_IMAGE}:${BUILD_ID}"]
 
   - id: push-latest
     name: gcr.io/cloud-builders/docker
@@ -49,7 +49,7 @@ steps:
       - run
       - deploy
       - ${_SERVICE_NAME}
-      - --image=${_IMAGE}:${COMMIT_SHA}
+      - --image=${_IMAGE}:${BUILD_ID}
       - --region=${_REGION}
       - --platform=managed
       - --port=8080
@@ -78,7 +78,7 @@ steps:
       - --format=value(status.url)
 
 images:
-  - "${_IMAGE}:${COMMIT_SHA}"
+  - "${_IMAGE}:${BUILD_ID}"
   - "${_IMAGE}:latest"
 
 options:
