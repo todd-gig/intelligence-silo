@@ -1,0 +1,75 @@
+{
+  "schema_name": "lead_silence_state",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "lead_id",
+    "email",
+    "stage",
+    "days_since_last_touch",
+    "previous_attempts",
+    "status"
+  ],
+  "properties": {
+    "lead_id": {
+      "type": "string"
+    },
+    "account_id": {
+      "type": "string"
+    },
+    "opportunity_id": {
+      "type": "string"
+    },
+    "owner_id": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string"
+    },
+    "phone": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string"
+    },
+    "deal_value": {
+      "type": "number"
+    },
+    "days_since_last_touch": {
+      "type": "integer"
+    },
+    "previous_attempts": {
+      "type": "integer"
+    },
+    "last_touch_at": {
+      "type": "string"
+    },
+    "last_reply_at": {
+      "type": "string"
+    },
+    "recent_open_signal": {
+      "type": "boolean"
+    },
+    "recent_click_signal": {
+      "type": "boolean"
+    },
+    "meeting_status": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "silent",
+        "engaged",
+        "disqualified",
+        "unsubscribed",
+        "bounced",
+        "closed"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

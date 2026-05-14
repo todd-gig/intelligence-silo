@@ -1,0 +1,39 @@
+{
+  "schema_name": "action_execution_request",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "request_id",
+    "decision_id",
+    "action_type",
+    "entity_id",
+    "payload",
+    "requested_at"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "decision_id": {
+      "type": "string"
+    },
+    "action_type": {
+      "type": "string"
+    },
+    "entity_id": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "requested_at": {
+      "type": "string"
+    },
+    "requested_by": {
+      "type": "string"
+    },
+    "authority_level": {
+      "type": "string"
+    }
+  }
+}
