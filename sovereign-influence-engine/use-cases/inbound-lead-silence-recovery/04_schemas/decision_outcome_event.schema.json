@@ -1,0 +1,48 @@
+{
+  "schema_name": "decision_outcome_event",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "outcome_id",
+    "decision_id",
+    "entity_id",
+    "outcome_type",
+    "observed_at"
+  ],
+  "properties": {
+    "outcome_id": {
+      "type": "string"
+    },
+    "decision_id": {
+      "type": "string"
+    },
+    "entity_id": {
+      "type": "string"
+    },
+    "outcome_type": {
+      "type": "string",
+      "enum": [
+        "reply_received",
+        "meeting_booked",
+        "opportunity_revived",
+        "deal_closed",
+        "no_reply",
+        "bounce",
+        "unsubscribe",
+        "failed_execution"
+      ]
+    },
+    "revenue_impact": {
+      "type": "number"
+    },
+    "time_to_outcome_hours": {
+      "type": "number"
+    },
+    "observed_at": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schema_name": "silence_recovery_weights",
+  "version": "1.0.0",
+  "weights": {
+    "normalized_deal_value": 0.3,
+    "silence_score": 0.3,
+    "engagement_decay_score": 0.2,
+    "stage_score": 0.2
+  },
+  "calibration_policy": {
+    "max_delta_per_cycle": 0.05,
+    "min_weight": 0.02,
+    "max_weight": 0.5,
+    "cycle": "24h"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "post_demo_reengage_v1": {
+    "channel": "email",
+    "subject": "Quick follow-up",
+    "body": "Hey {{name}},\\n\\nWanted to check in\u2014any thoughts on what we discussed?\\n\\nHappy to walk through next steps or answer anything.\\n\\n- {{rep_name}}"
+  },
+  "value_reinforcement_v1": {
+    "channel": "email",
+    "subject": "Worth a quick follow-up?",
+    "body": "Hey {{name}},\\n\\nBased on what you shared, this could directly impact {{pain_point}}.\\n\\nWorth a quick 10-minute sync?\\n\\n- {{rep_name}}"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "bundle_name": "gigaton_sie_first_production_bundle_v1",
+  "created_at": "2026-04-20T23:04:57.258826Z",
+  "sources": [
+    {
+      "source_id": "SRC-SIE-DEF",
+      "title": "Sovereign Influence Engine \u2014 Definition",
+      "source_type": "project_text",
+      "key_points": [
+        "system owns decision logic, memory, calibration, and authority",
+        "value loop is ingest -> resolve -> trust/authority -> score/decide -> execute -> outcome -> calibrate",
+        "system acts through structured policy-gated interventions",
+        "cx/sales example explicitly mentions deciding whether to schedule a meeting or send a message at a stage of silence"
+      ]
+    },
+    {
+      "source_id": "SRC-PROJECT-MEMORY",
+      "title": "Project Memory Candidates",
+      "source_type": "project_memory_registry_seed",
+      "key_points": [
+        "Trust Matrix is foundational logic",
+        "Executive Decision Engine is core product layer",
+        "Decision Execution Engine bridges intelligence to monetization",
+        "output should be structured, reusable, and machine-ingestible",
+        "portable system prompt contract is root control layer"
+      ]
+    }
+  ]
+}

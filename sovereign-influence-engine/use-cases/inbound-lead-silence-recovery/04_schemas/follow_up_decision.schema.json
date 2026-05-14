@@ -1,0 +1,121 @@
+{
+  "schema_name": "follow_up_decision",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "entity_id",
+    "decision_type",
+    "context",
+    "priority_score",
+    "trust_score",
+    "authority_level",
+    "selected_action",
+    "action_payload",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string"
+    },
+    "entity_id": {
+      "type": "string"
+    },
+    "decision_type": {
+      "type": "string",
+      "enum": [
+        "follow_up_action"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "days_since_last_touch": {
+          "type": "integer"
+        },
+        "deal_value": {
+          "type": "number"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "previous_attempts": {
+          "type": "integer"
+        },
+        "prior_response_rate": {
+          "type": "number"
+        },
+        "account_tier": {
+          "type": "string"
+        },
+        "owner_assigned": {
+          "type": "boolean"
+        },
+        "recent_open_signal": {
+          "type": "boolean"
+        },
+        "recent_click_signal": {
+          "type": "boolean"
+        },
+        "meeting_status": {
+          "type": "string"
+        }
+      }
+    },
+    "priority_score": {
+      "type": "number"
+    },
+    "trust_score": {
+      "type": "number"
+    },
+    "authority_level": {
+      "type": "string"
+    },
+    "selected_action": {
+      "type": "string",
+      "enum": [
+        "send_email",
+        "send_message",
+        "create_task",
+        "escalate_to_human",
+        "schedule_follow_up",
+        "do_not_execute"
+      ]
+    },
+    "action_payload": {
+      "type": "object"
+    },
+    "policy_gate_result": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "blocked",
+        "requires_human_review"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "approved",
+        "executed",
+        "blocked",
+        "failed",
+        "completed"
+      ]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "executed_at": {
+      "type": "string"
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
