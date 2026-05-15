@@ -10,9 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CPU-only PyTorch first (avoids pulling the massive CUDA bundle ~2.5GB → ~750MB)
+# Install CPU-only PyTorch first (avoids pulling the massive CUDA bundle ~2.5GB → ~750MB).
+# torch>=2.4 required for nn.RMSNorm (used in core/models/slm.py) and NumPy 2.x compatibility.
 RUN pip install --no-cache-dir \
-    torch==2.2.2+cpu \
+    torch==2.4.1+cpu \
     --index-url https://download.pytorch.org/whl/cpu
 
 # Install package dependencies (production only — no dev extras)
