@@ -44,26 +44,41 @@ steps:
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
     waitFor: [push-sha]
-    entrypoint: gcloud
+    entrypoint: bash
+    # Wrapped in bash so we can conditionally add --set-secrets when the Drive
+    # OAuth secrets exist. gcloud fails the deploy if a referenced secret is
+    # missing, so unconditional --set-secrets breaks deploys until both
+    # google-drive-oauth-client + oauth-state-secret are provisioned in
+    # Secret Manager (carmen-beach-properties).
     args:
-      - run
-      - deploy
-      - ${_SERVICE_NAME}
-      - --image=${_IMAGE}:${BUILD_ID}
-      - --region=${_REGION}
-      - --platform=managed
-      - --port=8080
-      - --allow-unauthenticated
-      - --ingress=all
-      - --memory=4Gi
-      - --cpu=2
-      - --cpu-boost
-      - --min-instances=1
-      - --max-instances=3
-      - --timeout=300
-      - --concurrency=4
-      - --startup-probe=tcpSocket.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=5,failureThreshold=30
-      - --set-env-vars=SILO_DATA_DIR=/data,VAULT_DISABLED=true,GCS_BUCKET=gigaton-silo-index,GCS_SYNC_PATH=semantic-index
+      - -c
+      - |
+        set -e
+        EXTRA_FLAGS=""
+        if gcloud secrets describe google-drive-oauth-client --project=$PROJECT_ID >/dev/null 2>&1 \
+           && gcloud secrets describe oauth-state-secret --project=$PROJECT_ID >/dev/null 2>&1; then
+          echo "▶ Drive OAuth secrets present — wiring --set-secrets"
+          EXTRA_FLAGS="--set-secrets=GOOGLE_DRIVE_OAUTH_CLIENT_JSON=google-drive-oauth-client:latest,OAUTH_STATE_SECRET=oauth-state-secret:latest"
+        else
+          echo "▶ Drive OAuth secrets not yet provisioned — skipping --set-secrets (silo will return 503 from /v1/oauth/drive/* until secrets exist)"
+        fi
+        gcloud run deploy ${_SERVICE_NAME} \
+          --image=${_IMAGE}:${BUILD_ID} \
+          --region=${_REGION} \
+          --platform=managed \
+          --port=8080 \
+          --allow-unauthenticated \
+          --ingress=all \
+          --memory=4Gi \
+          --cpu=2 \
+          --cpu-boost \
+          --min-instances=1 \
+          --max-instances=3 \
+          --timeout=300 \
+          --concurrency=4 \
+          --startup-probe=tcpSocket.port=8080,initialDelaySeconds=0,periodSeconds=10,timeoutSeconds=5,failureThreshold=30 \
+          --set-env-vars=SILO_DATA_DIR=/data,VAULT_DISABLED=true,GCS_BUCKET=gigaton-silo-index,GCS_SYNC_PATH=semantic-index \
+          $EXTRA_FLAGS
 
   - id: print-url
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
