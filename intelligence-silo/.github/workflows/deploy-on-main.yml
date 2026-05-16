@@ -1,0 +1,58 @@
+name: Auto-deploy on merge to main
+
+# Fires on every push to main (i.e. every PR merge). Runs the cloudbuild.yaml
+# that lives in the repo against carmen-beach-properties. Replaces the prior
+# manual `gcloud builds submit` workflow so PRs ship without operator touch.
+#
+# One-time setup (see docs/AUTO_DEPLOY_SETUP.md):
+#   1. Create deployer SA: silo-gha-deployer@carmen-beach-properties.iam.gserviceaccount.com
+#   2. Grant: roles/cloudbuild.builds.editor + roles/iam.serviceAccountUser +
+#             roles/run.admin + roles/storage.admin + roles/secretmanager.admin
+#   3. Generate SA key, store as GitHub secret GCP_SA_KEY_CARMEN_BEACH_PROPERTIES
+#   4. Push this workflow to main. Done.
+#
+# Build takes ~5 min (PyTorch CPU wheel + sentence-transformers, after initial
+# layer caches warm up).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: intel-silo-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_CARMEN_BEACH_PROPERTIES }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: carmen-beach-properties
+
+      - name: Submit Cloud Build
+        run: |
+          gcloud builds submit \
+            --config=cloudbuild.yaml \
+            --project=carmen-beach-properties
+
+      - name: Health-check new revision
+        run: |
+          sleep 45
+          URL="https://intelligence-silo-rjmcrtvuzq-uc.a.run.app/health"
+          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$URL")
+          echo "Health: HTTP $STATUS"
+          test "$STATUS" = "200"
