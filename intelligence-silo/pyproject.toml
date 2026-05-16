@@ -23,6 +23,9 @@ dependencies = [
     "google-cloud-storage>=2.14.0",
     "google-cloud-aiplatform>=1.43.0",
     "google-auth>=2.27.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-api-python-client>=2.120.0",
+    "google-cloud-secret-manager>=2.18.0",
     "firebase-admin>=6.4.0",
 
     # Decision engine integration

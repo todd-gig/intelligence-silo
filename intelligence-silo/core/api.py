@@ -288,12 +288,16 @@ def create_app(config_path: str = "config/silo.yaml") -> FastAPI:
     # registry of memory sources per user, queried by all downstream engines
     # (HME / PPEME / persona-engine) via SMEN substrate read pattern.
     from . import sources as _sources_module
+    from . import drive_oauth as _drive_oauth
 
     _sources_db = os.environ.get(
         "SILO_SOURCES_DB",
         os.path.join(os.path.dirname(__file__), "..", "data", "sources.db"),
     )
     _sources_module.init_db(_sources_db)
+
+    # Drive OAuth uses a separate table inside the same SQLite db.
+    _drive_oauth.init_db(_sources_db)
 
     class _SourceAddIn(BaseModel):
         user_id: str = Field(..., min_length=1)
@@ -559,6 +563,165 @@ def create_app(config_path: str = "config/silo.yaml") -> FastAPI:
             "source_id": src["source_id"],
             "user_id": payload.user_id,
             "documents_processed": documents_processed,
+            "chunks_stored": chunks_stored,
+            "chunk_ids": chunk_ids[:50],
+            "status": "connected",
+        }
+
+    # ── Google Drive OAuth v0.5 ──────────────────────────────────────────────
+    # Per drive_oauth.py module docs. Replaces v0 manual-upload UX with proper
+    # OAuth-pull-from-Drive. The v0 endpoint (POST /v1/intelligence/capture/
+    # google-drive above) remains as fallback for users who prefer manual
+    # uploads or whose admin hasn't enabled the OAuth client.
+
+    @_app.get("/v1/oauth/drive/start", tags=["sources"])
+    async def drive_oauth_start(user_id: str):
+        from fastapi import HTTPException
+        if not _drive_oauth.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="Drive OAuth not configured on this silo (missing client credentials)",
+            )
+        try:
+            return _drive_oauth.build_authorization_url(user_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @_app.get("/v1/oauth/drive/callback", tags=["sources"])
+    async def drive_oauth_callback(code: str, state: str):
+        from fastapi import HTTPException
+        from fastapi.responses import RedirectResponse
+        user_id = _drive_oauth.verify_state_token(state)
+        if not user_id:
+            raise HTTPException(status_code=400, detail="Invalid or expired state token")
+        try:
+            token_payload = _drive_oauth.exchange_code(code)
+            email = None
+            try:
+                ui = _drive_oauth.fetch_userinfo(token_payload["access_token"])
+                email = ui.get("email")
+            except Exception:
+                pass  # non-fatal — userinfo is enrichment, not required
+            _drive_oauth.store_tokens(user_id, token_payload, granted_email=email)
+
+            # Register/update the source row so /sources reflects the connection
+            existing = _sources_module.list_for_user(user_id, source_type="google_drive")
+            if existing:
+                _sources_module.set_status(existing[0]["source_id"], "connected")
+            else:
+                _sources_module.add(
+                    user_id=user_id,
+                    source_type="google_drive",
+                    status="connected",
+                    provenance_metadata={"oauth_granted_email": email} if email else {},
+                )
+
+            return RedirectResponse(url=_drive_oauth._frontend_return_url(), status_code=302)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @_app.get("/v1/oauth/drive/status/{user_id}", tags=["sources"])
+    async def drive_oauth_status(user_id: str):
+        tokens = _drive_oauth.get_tokens(user_id)
+        if not tokens:
+            return {"connected": False, "configured": _drive_oauth.is_configured()}
+        import time as _t
+        return {
+            "connected": True,
+            "configured": _drive_oauth.is_configured(),
+            "granted_email": tokens.get("granted_email"),
+            "expires_at": tokens["expires_at"],
+            "expires_in_seconds": max(0, tokens["expires_at"] - int(_t.time())),
+            "has_refresh": bool(tokens.get("refresh_token")),
+            "scopes": tokens.get("scopes", ""),
+        }
+
+    @_app.delete("/v1/oauth/drive/{user_id}", tags=["sources"], status_code=204)
+    async def drive_oauth_disconnect(user_id: str):
+        _drive_oauth.delete_tokens(user_id)
+        # Also mark the source row as disconnected
+        for src in _sources_module.list_for_user(user_id, source_type="google_drive"):
+            _sources_module.set_status(src["source_id"], "disconnected")
+
+    class _DriveSyncIn(BaseModel):
+        user_id: str = Field(..., min_length=1)
+        max_files: int = 25
+        category: str = "google_drive"
+
+    @_app.post("/v1/intelligence/sync/google-drive", tags=["sources"], status_code=202)
+    async def drive_sync(payload: _DriveSyncIn):
+        from fastapi import HTTPException
+
+        existing = _sources_module.list_for_user(payload.user_id, source_type="google_drive")
+        if not existing:
+            src = _sources_module.add(
+                user_id=payload.user_id,
+                source_type="google_drive",
+                status="syncing",
+            )
+        else:
+            src = existing[0]
+            _sources_module.set_status(src["source_id"], "syncing")
+
+        try:
+            files = _drive_oauth.list_recent_docs(payload.user_id, page_size=payload.max_files)
+        except RuntimeError as exc:
+            _sources_module.set_status(src["source_id"], "error", error=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        chunks_stored = 0
+        chunk_ids: list[str] = []
+        files_processed = 0
+        try:
+            for f in files:
+                try:
+                    body = _drive_oauth.export_doc_text(payload.user_id, f["id"])
+                except RuntimeError:
+                    continue  # skip un-exportable files
+                if not body or not body.strip():
+                    continue
+                files_processed += 1
+                window = 4000
+                pos = 0
+                idx = 0
+                while pos < len(body):
+                    end = min(pos + window, len(body))
+                    if end < len(body):
+                        nl = body.rfind("\n\n", pos + window // 2, end)
+                        if nl > pos:
+                            end = nl
+                    chunk_text = (
+                        f"## {f['name']} (chunk {idx + 1})\n"
+                        f"_drive_id: {f['id']} · modified: {f.get('modifiedTime')}_\n\n"
+                        + body[pos:end].strip()
+                    )
+                    result = node.ingest_memory(
+                        text=chunk_text,
+                        source=f"google_drive:{f['name']}",
+                        category=payload.category,
+                        author=payload.user_id,
+                        is_markdown=True,
+                        priority=1.0,
+                    )
+                    for cid in result.get("chunk_ids", []):
+                        try:
+                            _sources_module.tag_event(cid, src["source_id"])
+                        except LookupError:
+                            pass
+                        chunk_ids.append(cid)
+                        chunks_stored += 1
+                    pos = end
+                    idx += 1
+            _sources_module.set_status(src["source_id"], "connected", mark_synced=True)
+        except Exception as exc:
+            _sources_module.set_status(src["source_id"], "error", error=str(exc))
+            raise HTTPException(status_code=500, detail=f"sync failed: {exc}")
+
+        return {
+            "source_id": src["source_id"],
+            "user_id": payload.user_id,
+            "files_listed": len(files),
+            "files_processed": files_processed,
             "chunks_stored": chunks_stored,
             "chunk_ids": chunk_ids[:50],
             "status": "connected",
