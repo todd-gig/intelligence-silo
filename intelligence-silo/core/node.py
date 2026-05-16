@@ -109,10 +109,18 @@ class IntelligenceNode:
             local_journal_path=str(self.data_dir / "decision_journal"),
             retrain_trigger=self.retrain_trigger,
         )
-        self.backup = GitBackupManager(
-            local_data_root=Path("."),
-            remote_repo=self.config.get("backup", {}).get("remote_repo"),
-        )
+        # Git backup — skip when vault is disabled. GitBackupManager mkdirs into
+        # Path.home() which doesn't exist for the system 'silo' user in Cloud Run
+        # (created with --no-create-home), so instantiation crashes the container.
+        # When VAULT_DISABLED=true, backups belong to the remote-runtime substrate
+        # (GCS / Cloud SQL), not to a local git repo on disk.
+        if vault_disabled:
+            self.backup = _NullBackup()
+        else:
+            self.backup = GitBackupManager(
+                local_data_root=Path("."),
+                remote_repo=self.config.get("backup", {}).get("remote_repo"),
+            )
         self.daemon = SyncDaemon(
             memory_hierarchy=self.memory,
             recorder=self.recorder,
@@ -446,6 +454,39 @@ class _NullVault:
     @property
     def size(self) -> int:
         return 0
+
+
+# ── Null Backup ───────────────────────────────────────────────────────────────
+
+class _NullBackup:
+    """No-op backup manager for Cloud Run deployments.
+
+    GitBackupManager mkdirs into Path.home() which doesn't exist for the
+    'silo' system user (created with --no-create-home). For remote-runtime
+    deployments backup substrate is GCS + Cloud SQL, not a local git repo.
+    Satisfies the GitBackupManager interface so sync_daemon + node lifecycle
+    code is unchanged.
+    """
+
+    remote_repo: str | None = None
+
+    def queue_important(self, file_path) -> None:  # noqa: ARG002
+        pass
+
+    def ensure_remote_repo(self) -> None:
+        pass
+
+    def sync_vault(self, blob: bytes) -> None:  # noqa: ARG002
+        pass
+
+    def sync_important(self) -> dict:
+        return {"synced": 0, "skipped_reason": "backup disabled"}
+
+    def sync_full(self) -> dict:
+        return {"synced": 0, "skipped_reason": "backup disabled"}
+
+    def health(self) -> dict:
+        return {"status": "disabled", "backend": "null (VAULT_DISABLED=true)"}
 
 
 # Needed for record_decision's date check
