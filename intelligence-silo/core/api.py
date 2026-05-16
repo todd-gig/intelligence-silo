@@ -466,6 +466,104 @@ def create_app(config_path: str = "config/silo.yaml") -> FastAPI:
             "status": "connected",
         }
 
+    # ── Google Drive Connector (POC) ─────────────────────────────────────────
+    # Accepts already-fetched Drive documents (text content + metadata) from
+    # the FE. The FE handles Drive auth + content fetch; backend just chunks
+    # + ingests via node.ingest_memory so embeddings + FAISS storage stay
+    # consistent with every other memory path.
+    #
+    # Per the Source Registry pattern: each ingested chunk tags back to a
+    # source_id so coverage + provenance survive re-ingest.
+
+    class _DriveDocIn(BaseModel):
+        title: str = Field(..., min_length=1)
+        content: str = Field(..., min_length=1)
+        mime_type: str = "text/plain"
+        drive_file_id: str | None = None
+        modified_at: str | None = None
+
+    class _GoogleDriveCaptureIn(BaseModel):
+        user_id: str = Field(..., min_length=1)
+        documents: list[_DriveDocIn] = Field(default_factory=list)
+        source_id: str | None = None
+        category: str = "google_drive"
+        max_chars_per_chunk: int = 4000
+
+    @_app.post("/v1/intelligence/capture/google-drive",
+               tags=["sources"], status_code=202)
+    async def capture_google_drive(payload: _GoogleDriveCaptureIn):
+        from fastapi import HTTPException
+
+        if payload.source_id:
+            src = _sources_module.get(payload.source_id)
+            if src is None:
+                raise HTTPException(status_code=404, detail="source_id not registered")
+        else:
+            src = _sources_module.add(
+                user_id=payload.user_id,
+                source_type="google_drive",
+                status="syncing",
+            )
+        _sources_module.set_status(src["source_id"], "syncing")
+
+        chunks_stored = 0
+        chunk_ids: list[str] = []
+        documents_processed = 0
+        try:
+            for doc in payload.documents:
+                documents_processed += 1
+                window = max(500, payload.max_chars_per_chunk)
+                text = doc.content
+                # Char-windowed chunking with paragraph-boundary preference
+                pos = 0
+                idx = 0
+                while pos < len(text):
+                    end = min(pos + window, len(text))
+                    if end < len(text):
+                        # Prefer breaking at last paragraph boundary in window
+                        nl = text.rfind("\n\n", pos + window // 2, end)
+                        if nl > pos:
+                            end = nl
+                    chunk_text = (
+                        f"## {doc.title} (chunk {idx + 1})\n"
+                        f"_mime: {doc.mime_type}"
+                        + (f" · drive_file: {doc.drive_file_id}" if doc.drive_file_id else "")
+                        + (f" · modified: {doc.modified_at}" if doc.modified_at else "")
+                        + "_\n\n"
+                        + text[pos:end].strip()
+                    )
+                    result = node.ingest_memory(
+                        text=chunk_text,
+                        source=f"google_drive:{doc.title}",
+                        category=payload.category,
+                        author=payload.user_id,
+                        is_markdown=True,
+                        priority=1.0,
+                    )
+                    for cid in result.get("chunk_ids", []):
+                        try:
+                            _sources_module.tag_event(cid, src["source_id"])
+                        except LookupError:
+                            pass
+                        chunk_ids.append(cid)
+                        chunks_stored += 1
+                    pos = end
+                    idx += 1
+
+            _sources_module.set_status(src["source_id"], "connected", mark_synced=True)
+        except Exception as exc:
+            _sources_module.set_status(src["source_id"], "error", error=str(exc))
+            raise HTTPException(status_code=500, detail=f"ingest failed: {exc}")
+
+        return {
+            "source_id": src["source_id"],
+            "user_id": payload.user_id,
+            "documents_processed": documents_processed,
+            "chunks_stored": chunks_stored,
+            "chunk_ids": chunk_ids[:50],
+            "status": "connected",
+        }
+
     @_app.get("/matrix/info", tags=["matrix"])
     async def matrix_info():
         return node.matrix.performance_report()
